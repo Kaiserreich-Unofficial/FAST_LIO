@@ -464,14 +464,16 @@ bool sync_packages(MeasureGroup &meas)
     }
 
     /*** push imu data, and pop from imu buffer ***/
-    double imu_time = imu_buffer.front()->header.stamp.toSec();
+    auto imu_iter = imu_buffer.begin();
+    double imu_time = (*imu_iter)->header.stamp.toSec();
     meas.imu.clear();
-    while ((!imu_buffer.empty()) && (imu_time < lidar_end_time))
+
+    while(imu_iter != imu_buffer.end() && imu_time < lidar_end_time)
     {
-        imu_time = imu_buffer.front()->header.stamp.toSec();
+        imu_time = (*imu_iter)->header.stamp.toSec();
         if(imu_time > lidar_end_time) break;
-        meas.imu.push_back(imu_buffer.front());
-        imu_buffer.pop_front();
+        meas.imu.push_back(*imu_iter);
+        imu_iter = imu_buffer.erase(imu_iter); // 使用erase来移除元素并更新迭代器
     }
 
     double time_diff_pos2vel = fabs(last_timestamp_gnss_pos - last_timestamp_gnss_vel);
@@ -482,19 +484,22 @@ bool sync_packages(MeasureGroup &meas)
 
     // 将GNSS的pos buffer和vel buffer合成Vector(13维)存储在meas中
     meas.gnss.clear();
-    while (!(gnss_pos_buffer.empty() && gnss_vel_buffer.empty()))
+    auto pos_iter = gnss_pos_buffer.begin();
+    auto vel_iter = gnss_vel_buffer.begin();
+
+    while(pos_iter != gnss_pos_buffer.end() && vel_iter != gnss_vel_buffer.end())
     {
-        double gnss_time = (gnss_pos_buffer.front()->header.stamp.toSec() + gnss_vel_buffer.front()->header.stamp.toSec())/2;
+        double gnss_time = ((*pos_iter)->header.stamp.toSec() + (*vel_iter)->header.stamp.toSec()) / 2;
         if(gnss_time > lidar_end_time) break;
-        Eigen::Matrix<double,1,13> gnss_data;
-        gnss_data << gnss_time; //GNSS时间戳
-        gnss_data << gnss_pos_buffer.front()->latitude, gnss_pos_buffer.front()->longitude, gnss_pos_buffer.front()->altitude; //GNSS LLA 坐标
-        gnss_data << gnss_pos_buffer.front()->position_covariance[0], gnss_pos_buffer.front()->position_covariance[4], gnss_pos_buffer.front()->position_covariance[8]; //GNSS LLA 方差
-        gnss_data << gnss_vel_buffer.front()->twist.twist.linear.x, gnss_vel_buffer.front()->twist.twist.linear.y, gnss_vel_buffer.front()->twist.twist.linear.z; //GNSS 线性速度
-        gnss_data << gnss_vel_buffer.front()->twist.covariance[0], gnss_vel_buffer.front()->twist.covariance[7], gnss_vel_buffer.front()->twist.covariance[14]; //GNSS 速度方差
-        meas.gnss.push_back(&gnss_data);
-        gnss_pos_buffer.pop_front();
-        gnss_vel_buffer.pop_front();
+        MatrixPtr gnss_data = new Eigen::Matrix<double,1,13>;
+        *gnss_data << gnss_time; //GNSS时间戳
+        *gnss_data << gnss_pos_buffer.front()->latitude, gnss_pos_buffer.front()->longitude, gnss_pos_buffer.front()->altitude; //GNSS LLA 坐标
+        *gnss_data << gnss_pos_buffer.front()->position_covariance[0], gnss_pos_buffer.front()->position_covariance[4], gnss_pos_buffer.front()->position_covariance[8]; //GNSS LLA 方差
+        *gnss_data << gnss_vel_buffer.front()->twist.twist.linear.x, gnss_vel_buffer.front()->twist.twist.linear.y, gnss_vel_buffer.front()->twist.twist.linear.z; //GNSS 线性速度
+        *gnss_data << gnss_vel_buffer.front()->twist.covariance[0], gnss_vel_buffer.front()->twist.covariance[7], gnss_vel_buffer.front()->twist.covariance[14]; //GNSS 速度方差
+        meas.gnss.push_back(gnss_data);
+        pos_iter = gnss_pos_buffer.erase(pos_iter); // 使用erase来移除元素并更新迭代器
+        vel_iter = gnss_vel_buffer.erase(vel_iter); // 使用erase来移除元素并更新迭代器
     }
 
     lidar_buffer.pop_front();
@@ -1088,7 +1093,7 @@ int main(int argc, char** argv)
                 s_plot9[time_log_counter] = aver_time_consu;
                 s_plot10[time_log_counter] = add_point_size;
                 time_log_counter ++;
-                printf("[ mapping ]: time: IMU + Map + Input Downsample: %0.6f ave match: %0.6f ave solve: %0.6f  ave ICP: %0.6f  map incre: %0.6f ave total: %0.6f icp: %0.6f construct H: %0.6f \n",t1-t0,aver_time_match,aver_time_solve,t3-t1,t5-t3,aver_time_consu,aver_time_icp, aver_time_const_H_time);
+                ROS_INFO("[ mapping ]: time: IMU + Map + Input Downsample: %0.6f ave match: %0.6f ave solve: %0.6f  ave ICP: %0.6f  map incre: %0.6f ave total: %0.6f icp: %0.6f construct H: %0.6f \n",t1-t0,aver_time_match,aver_time_solve,t3-t1,t5-t3,aver_time_consu,aver_time_icp, aver_time_const_H_time);
                 ext_euler = SO3ToEuler(state_point.offset_R_L_I);
                 fout_out << setw(20) << Measures.lidar_beg_time - first_lidar_time << " " << euler_cur.transpose() << " " << state_point.pos.transpose()<< " " << ext_euler.transpose() << " "<<state_point.offset_T_L_I.transpose()<<" "<< state_point.vel.transpose() \
                 <<" "<<state_point.bg.transpose()<<" "<<state_point.ba.transpose()<<" "<<state_point.grav<<" "<<feats_undistort->points.size()<<endl;
