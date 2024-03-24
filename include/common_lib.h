@@ -51,6 +51,7 @@ M3D Eye3d(M3D::Identity());
 M3F Eye3f(M3F::Identity());
 V3D Zero3d(0, 0, 0);
 V3F Zero3f(0, 0, 0);
+using MatrixPtr = Eigen::Matrix<double, 1, 13>*;
 
 struct MeasureGroup     // Lidar data and imu dates for the curent process
 {
@@ -63,6 +64,7 @@ struct MeasureGroup     // Lidar data and imu dates for the curent process
     double lidar_end_time;
     PointCloudXYZI::Ptr lidar;
     deque<sensor_msgs::Imu::ConstPtr> imu;
+    deque<MatrixPtr> gnss;
 };
 
 struct StatesGroup
@@ -204,7 +206,7 @@ bool esti_normvector(Matrix<T, 3, 1> &normvec, const PointVector &point, const T
         A(j,2) = point[j].z;
     }
     normvec = A.colPivHouseholderQr().solve(b);
-    
+
     for (int j = 0; j < point_num; j++)
     {
         if (fabs(normvec(0) * point[j].x + normvec(1) * point[j].y + normvec(2) * point[j].z + 1.0f) > threshold)

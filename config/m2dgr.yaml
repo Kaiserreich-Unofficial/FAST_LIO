@@ -1,6 +1,8 @@
 common:
     lid_topic:  "/velodyne_points"
     imu_topic:  "/handsfree/imu"
+    gnss_pos_topic: "/ublox/fix"
+    gnss_vel_topic: "/ublox/fix_velocity"
 
 preprocess:
     lidar_type: 2                # 1 for Livox serials LiDAR, 2 for Velodyne LiDAR, 3 for ouster LiDAR,
