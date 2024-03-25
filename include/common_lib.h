@@ -173,6 +173,10 @@ auto set_pose6d(const double t, const Matrix<T, 3, 1> &a, const Matrix<T, 3, 1> 
 {
     Pose6D rot_kp;
     rot_kp.offset_time = t;
+#ifdef MP_EN
+			omp_set_num_threads(MP_PROC_NUM);
+#pragma omp parallel for
+#endif
     for (int i = 0; i < 3; i++)
     {
         rot_kp.acc[i] = a(i);
@@ -198,7 +202,10 @@ bool esti_normvector(Matrix<T, 3, 1> &normvec, const PointVector &point, const T
     MatrixXf b(point_num, 1);
     b.setOnes();
     b *= -1.0f;
-
+#ifdef MP_EN
+			omp_set_num_threads(MP_PROC_NUM);
+#pragma omp parallel for
+#endif
     for (int j = 0; j < point_num; j++)
     {
         A(j,0) = point[j].x;
@@ -232,7 +239,10 @@ bool esti_plane(Matrix<T, 4, 1> &pca_result, const PointVector &point, const T &
     A.setZero();
     b.setOnes();
     b *= -1.0f;
-
+#ifdef MP_EN
+			omp_set_num_threads(MP_PROC_NUM);
+#pragma omp parallel for
+#endif
     for (int j = 0; j < NUM_MATCH_POINTS; j++)
     {
         A(j,0) = point[j].x;

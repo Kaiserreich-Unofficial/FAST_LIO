@@ -73,7 +73,7 @@ double kdtree_incremental_time = 0.0, kdtree_search_time = 0.0, kdtree_delete_ti
 double T1[MAXN], s_plot[MAXN], s_plot2[MAXN], s_plot3[MAXN], s_plot4[MAXN], s_plot5[MAXN], s_plot6[MAXN], s_plot7[MAXN], s_plot8[MAXN], s_plot9[MAXN], s_plot10[MAXN], s_plot11[MAXN];
 double match_time = 0, solve_time = 0, solve_const_H_time = 0;
 int    kdtree_size_st = 0, kdtree_size_end = 0, add_point_size = 0, kdtree_delete_counter = 0;
-bool   runtime_pos_log = false, pcd_save_en = false, time_sync_en = false, extrinsic_est_en = true, path_en = true;
+bool   runtime_pos_log = false, pcd_save_en = false, time_sync_en = false, extrinsic_est_en = true, path_en = true, gnss_en = false;
 /**************************/
 
 float res_last[100000] = {0.0};
@@ -383,10 +383,10 @@ void gnss_pos_cbk(const sensor_msgs::NavSatFix::ConstPtr &msg)
         gnss_pos_buffer.clear();
     }
 
-    // ROS_INFO("lat:%0.6f lon:%0.6f alt:%0.6f", msg->latitude, msg->longitude, msg->altitude);
-    // ROS_INFO("Variance of lat:%0.6f", msg->position_covariance[0]);
-    // ROS_INFO("Variance of lon:%0.6f", msg->position_covariance[4]);
-    // ROS_INFO("Variance of alt:%0.6f", msg->position_covariance[8]);
+    ROS_INFO("lat:%0.6f lon:%0.6f alt:%0.6f", msg->latitude, msg->longitude, msg->altitude);
+    ROS_INFO("Variance of lat:%0.6f", msg->position_covariance[0]);
+    ROS_INFO("Variance of lon:%0.6f", msg->position_covariance[4]);
+    ROS_INFO("Variance of alt:%0.6f", msg->position_covariance[8]);
 
     last_timestamp_gnss_pos = timestamp;
 
@@ -411,10 +411,10 @@ void gnss_vel_cbk(const geometry_msgs::TwistWithCovarianceStamped::ConstPtr &msg
         gnss_vel_buffer.clear();
     }
 
-    // ROS_INFO("vel_x:%0.6f vel_y:%0.6f vel_z:%0.6f", msg->twist.twist.linear.x, msg->twist.twist.linear.y, msg->twist.twist.linear.z);
-    // ROS_INFO("Variance of vel_x:%0.6f", msg->twist.covariance[0]);
-    // ROS_INFO("Variance of vel_y:%0.6f", msg->twist.covariance[7]);
-    // ROS_INFO("Variance of vel_z:%0.6f", msg->twist.covariance[14]);
+    ROS_INFO("vel_x:%0.6f vel_y:%0.6f vel_z:%0.6f", msg->twist.twist.linear.x, msg->twist.twist.linear.y, msg->twist.twist.linear.z);
+    ROS_INFO("Variance of vel_x:%0.6f", msg->twist.covariance[0]);
+    ROS_INFO("Variance of vel_y:%0.6f", msg->twist.covariance[7]);
+    ROS_INFO("Variance of vel_z:%0.6f", msg->twist.covariance[14]);
 
     last_timestamp_gnss_vel = timestamp;
 
@@ -428,8 +428,9 @@ double lidar_mean_scantime = 0.0;
 int    scan_num = 0;
 bool sync_packages(MeasureGroup &meas)
 {
-    if (lidar_buffer.empty() || imu_buffer.empty() || gnss_pos_buffer.empty() || gnss_vel_buffer.empty()) {
-        return false;
+    if (lidar_buffer.empty() || imu_buffer.empty()) {
+        if (gnss_en && (gnss_pos_buffer.empty() || gnss_vel_buffer.empty()))    return false;
+        else if (!gnss_en) return false;
     }
 
     /*** push a lidar scan ***/
@@ -475,33 +476,34 @@ bool sync_packages(MeasureGroup &meas)
         meas.imu.push_back(*imu_iter);
         imu_iter = imu_buffer.erase(imu_iter); // 使用erase来移除元素并更新迭代器
     }
-
-    double time_diff_pos2vel = fabs(last_timestamp_gnss_pos - last_timestamp_gnss_vel);
-    if ((last_timestamp_gnss_pos < lidar_end_time) && (last_timestamp_gnss_vel < lidar_end_time) && (time_diff_lidar_to_imu <= 0.01)) // 验证GNSS的pos buffer和vel buffer是否同步
+    if (gnss_en)
     {
-        return false;
+        double time_diff_pos2vel = fabs(last_timestamp_gnss_pos - last_timestamp_gnss_vel);
+        if ((last_timestamp_gnss_pos < lidar_end_time) && (last_timestamp_gnss_vel < lidar_end_time) && (time_diff_lidar_to_imu <= 0.01)) // 验证GNSS的pos buffer和vel buffer是否同步
+        {
+            return false;
+        }
+
+        // 将GNSS的pos buffer和vel buffer合成Vector(13维)存储在meas中
+        meas.gnss.clear();
+        auto pos_iter = gnss_pos_buffer.begin();
+        auto vel_iter = gnss_vel_buffer.begin();
+
+        while(pos_iter != gnss_pos_buffer.end() && vel_iter != gnss_vel_buffer.end())
+        {
+            double gnss_time = ((*pos_iter)->header.stamp.toSec() + (*vel_iter)->header.stamp.toSec()) / 2;
+            if(gnss_time > lidar_end_time) break;
+            MatrixPtr gnss_data = new Eigen::Matrix<double,1,13>;
+            *gnss_data << gnss_time; //GNSS时间戳
+            *gnss_data << gnss_pos_buffer.front()->latitude, gnss_pos_buffer.front()->longitude, gnss_pos_buffer.front()->altitude; //GNSS LLA 坐标
+            *gnss_data << gnss_pos_buffer.front()->position_covariance[0], gnss_pos_buffer.front()->position_covariance[4], gnss_pos_buffer.front()->position_covariance[8]; //GNSS LLA 方差
+            *gnss_data << gnss_vel_buffer.front()->twist.twist.linear.x, gnss_vel_buffer.front()->twist.twist.linear.y, gnss_vel_buffer.front()->twist.twist.linear.z; //GNSS 线性速度
+            *gnss_data << gnss_vel_buffer.front()->twist.covariance[0], gnss_vel_buffer.front()->twist.covariance[7], gnss_vel_buffer.front()->twist.covariance[14]; //GNSS 速度方差
+            meas.gnss.push_back(gnss_data);
+            pos_iter = gnss_pos_buffer.erase(pos_iter); // 使用erase来移除元素并更新迭代器
+            vel_iter = gnss_vel_buffer.erase(vel_iter); // 使用erase来移除元素并更新迭代器
+        }
     }
-
-    // 将GNSS的pos buffer和vel buffer合成Vector(13维)存储在meas中
-    meas.gnss.clear();
-    auto pos_iter = gnss_pos_buffer.begin();
-    auto vel_iter = gnss_vel_buffer.begin();
-
-    while(pos_iter != gnss_pos_buffer.end() && vel_iter != gnss_vel_buffer.end())
-    {
-        double gnss_time = ((*pos_iter)->header.stamp.toSec() + (*vel_iter)->header.stamp.toSec()) / 2;
-        if(gnss_time > lidar_end_time) break;
-        MatrixPtr gnss_data = new Eigen::Matrix<double,1,13>;
-        *gnss_data << gnss_time; //GNSS时间戳
-        *gnss_data << gnss_pos_buffer.front()->latitude, gnss_pos_buffer.front()->longitude, gnss_pos_buffer.front()->altitude; //GNSS LLA 坐标
-        *gnss_data << gnss_pos_buffer.front()->position_covariance[0], gnss_pos_buffer.front()->position_covariance[4], gnss_pos_buffer.front()->position_covariance[8]; //GNSS LLA 方差
-        *gnss_data << gnss_vel_buffer.front()->twist.twist.linear.x, gnss_vel_buffer.front()->twist.twist.linear.y, gnss_vel_buffer.front()->twist.twist.linear.z; //GNSS 线性速度
-        *gnss_data << gnss_vel_buffer.front()->twist.covariance[0], gnss_vel_buffer.front()->twist.covariance[7], gnss_vel_buffer.front()->twist.covariance[14]; //GNSS 速度方差
-        meas.gnss.push_back(gnss_data);
-        pos_iter = gnss_pos_buffer.erase(pos_iter); // 使用erase来移除元素并更新迭代器
-        vel_iter = gnss_vel_buffer.erase(vel_iter); // 使用erase来移除元素并更新迭代器
-    }
-
     lidar_buffer.pop_front();
     time_buffer.pop_front();
     lidar_pushed = false;
@@ -875,6 +877,7 @@ int main(int argc, char** argv)
     nh.param<bool>("runtime_pos_log_enable", runtime_pos_log, 0);
     nh.param<bool>("mapping/extrinsic_est_en", extrinsic_est_en, true);
     nh.param<bool>("pcd_save/pcd_save_en", pcd_save_en, false);
+    nh.param<bool>("common/gnss_en", gnss_en, false);
     nh.param<int>("pcd_save/interval", pcd_save_interval, -1);
     nh.param<vector<double>>("mapping/extrinsic_T", extrinT, vector<double>());
     nh.param<vector<double>>("mapping/extrinsic_R", extrinR, vector<double>());
