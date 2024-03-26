@@ -51,7 +51,7 @@ M3D Eye3d(M3D::Identity());
 M3F Eye3f(M3F::Identity());
 V3D Zero3d(0, 0, 0);
 V3F Zero3f(0, 0, 0);
-using MatrixPtr = Eigen::Matrix<double, 1, 13>*;
+using GNSSPtr = Eigen::VectorXd*;
 
 struct MeasureGroup     // Lidar data and imu dates for the curent process
 {
@@ -64,7 +64,7 @@ struct MeasureGroup     // Lidar data and imu dates for the curent process
     double lidar_end_time;
     PointCloudXYZI::Ptr lidar;
     deque<sensor_msgs::Imu::ConstPtr> imu;
-    deque<MatrixPtr> gnss;
+    deque<GNSSPtr> gnss;
 };
 
 struct StatesGroup

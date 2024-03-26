@@ -143,6 +143,7 @@ geometry_msgs::PoseStamped msg_body_pose;
 
 shared_ptr<Preprocess> p_pre(new Preprocess());
 shared_ptr<ImuProcess> p_imu(new ImuProcess());
+shared_ptr<GNSSProcess> p_gnss(new GNSSProcess());
 
 void SigHandle(int sig)
 {
@@ -493,7 +494,7 @@ bool sync_packages(MeasureGroup &meas)
         {
             double gnss_time = ((*pos_iter)->header.stamp.toSec() + (*vel_iter)->header.stamp.toSec()) / 2;
             if(gnss_time > lidar_end_time) break;
-            MatrixPtr gnss_data = new Eigen::Matrix<double,1,13>;
+            GNSSPtr gnss_data = new Eigen::VectorXd(13);
             *gnss_data << gnss_time; //GNSS时间戳
             *gnss_data << gnss_pos_buffer.front()->latitude, gnss_pos_buffer.front()->longitude, gnss_pos_buffer.front()->altitude; //GNSS LLA 坐标
             *gnss_data << gnss_pos_buffer.front()->position_covariance[0], gnss_pos_buffer.front()->position_covariance[4], gnss_pos_buffer.front()->position_covariance[8]; //GNSS LLA 方差
@@ -976,6 +977,7 @@ int main(int argc, char** argv)
             t0 = omp_get_wtime();
 
             p_imu->Process(Measures, kf, feats_undistort);
+            p_gnss->Process(Measures, kf);
             state_point = kf.get_x();
             pos_lid = state_point.pos + state_point.rot * state_point.offset_T_L_I;
 
