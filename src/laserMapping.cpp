@@ -496,11 +496,11 @@ bool sync_packages(MeasureGroup &meas)
             double gnss_time = ((*pos_iter)->header.stamp.toSec() + (*vel_iter)->header.stamp.toSec()) / 2;
             if(gnss_time > lidar_end_time) break;
             auto gnss_data = std::make_shared<VD(13)>();
-            (*gnss_data) << gnss_time; //GNSS时间戳
-            (*gnss_data) << (*pos_iter)->latitude, (*pos_iter)->longitude, (*pos_iter)->altitude; //GNSS LLA 坐标
-            (*gnss_data) << (*pos_iter)->position_covariance[0], (*pos_iter)->position_covariance[4], (*pos_iter)->position_covariance[8]; //GNSS LLA 方差
-            (*gnss_data) << (*vel_iter)->twist.twist.linear.x, (*vel_iter)->twist.twist.linear.y, (*vel_iter)->twist.twist.linear.z; //GNSS 线性速度
-            (*gnss_data) << (*vel_iter)->twist.covariance[0], (*vel_iter)->twist.covariance[7], (*vel_iter)->twist.covariance[14]; //GNSS 速度方差
+            (*gnss_data) << gnss_time, //GNSS时间戳
+                            (*pos_iter)->latitude, (*pos_iter)->longitude, (*pos_iter)->altitude, //GNSS LLA 坐标
+                            (*pos_iter)->position_covariance[0], (*pos_iter)->position_covariance[4], (*pos_iter)->position_covariance[8], //GNSS LLA 方差
+                            (*vel_iter)->twist.twist.linear.x, (*vel_iter)->twist.twist.linear.y, (*vel_iter)->twist.twist.linear.z, //GNSS 线性速度
+                            (*vel_iter)->twist.covariance[0], (*vel_iter)->twist.covariance[7], (*vel_iter)->twist.covariance[14]; //GNSS 速度方差
             meas.gnss.push_back(gnss_data);
             // cout << *(meas.gnss.front()) << endl; //确认数据还在
             pos_iter = gnss_pos_buffer.erase(pos_iter); // 使用erase来移除元素并更新迭代器
