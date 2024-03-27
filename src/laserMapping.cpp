@@ -384,10 +384,10 @@ void gnss_pos_cbk(const sensor_msgs::NavSatFix::ConstPtr &msg)
         gnss_pos_buffer.clear();
     }
 
-    ROS_INFO("lat:%0.6f lon:%0.6f alt:%0.6f", msg->latitude, msg->longitude, msg->altitude);
-    ROS_INFO("Variance of lat:%0.6f", msg->position_covariance[0]);
-    ROS_INFO("Variance of lon:%0.6f", msg->position_covariance[4]);
-    ROS_INFO("Variance of alt:%0.6f", msg->position_covariance[8]);
+    // ROS_INFO("lat:%0.6f lon:%0.6f alt:%0.6f", msg->latitude, msg->longitude, msg->altitude);
+    // ROS_INFO("Variance of lat:%0.6f", msg->position_covariance[0]);
+    // ROS_INFO("Variance of lon:%0.6f", msg->position_covariance[4]);
+    // ROS_INFO("Variance of alt:%0.6f", msg->position_covariance[8]);
 
     last_timestamp_gnss_pos = timestamp;
 
@@ -412,10 +412,10 @@ void gnss_vel_cbk(const geometry_msgs::TwistWithCovarianceStamped::ConstPtr &msg
         gnss_vel_buffer.clear();
     }
 
-    ROS_INFO("vel_x:%0.6f vel_y:%0.6f vel_z:%0.6f", msg->twist.twist.linear.x, msg->twist.twist.linear.y, msg->twist.twist.linear.z);
-    ROS_INFO("Variance of vel_x:%0.6f", msg->twist.covariance[0]);
-    ROS_INFO("Variance of vel_y:%0.6f", msg->twist.covariance[7]);
-    ROS_INFO("Variance of vel_z:%0.6f", msg->twist.covariance[14]);
+    // ROS_INFO("vel_x:%0.6f vel_y:%0.6f vel_z:%0.6f", msg->twist.twist.linear.x, msg->twist.twist.linear.y, msg->twist.twist.linear.z);
+    // ROS_INFO("Variance of vel_x:%0.6f", msg->twist.covariance[0]);
+    // ROS_INFO("Variance of vel_y:%0.6f", msg->twist.covariance[7]);
+    // ROS_INFO("Variance of vel_z:%0.6f", msg->twist.covariance[14]);
 
     last_timestamp_gnss_vel = timestamp;
 
@@ -427,6 +427,7 @@ void gnss_vel_cbk(const geometry_msgs::TwistWithCovarianceStamped::ConstPtr &msg
 
 double lidar_mean_scantime = 0.0;
 int    scan_num = 0;
+
 bool sync_packages(MeasureGroup &meas)
 {
     if (lidar_buffer.empty() || imu_buffer.empty()) {
@@ -494,13 +495,14 @@ bool sync_packages(MeasureGroup &meas)
         {
             double gnss_time = ((*pos_iter)->header.stamp.toSec() + (*vel_iter)->header.stamp.toSec()) / 2;
             if(gnss_time > lidar_end_time) break;
-            GNSSPtr gnss_data = new Eigen::Matrix<double,13,1>;
-            *gnss_data << gnss_time; //GNSS时间戳
-            *gnss_data << gnss_pos_buffer.front()->latitude, gnss_pos_buffer.front()->longitude, gnss_pos_buffer.front()->altitude; //GNSS LLA 坐标
-            *gnss_data << gnss_pos_buffer.front()->position_covariance[0], gnss_pos_buffer.front()->position_covariance[4], gnss_pos_buffer.front()->position_covariance[8]; //GNSS LLA 方差
-            *gnss_data << gnss_vel_buffer.front()->twist.twist.linear.x, gnss_vel_buffer.front()->twist.twist.linear.y, gnss_vel_buffer.front()->twist.twist.linear.z; //GNSS 线性速度
-            *gnss_data << gnss_vel_buffer.front()->twist.covariance[0], gnss_vel_buffer.front()->twist.covariance[7], gnss_vel_buffer.front()->twist.covariance[14]; //GNSS 速度方差
+            auto gnss_data = std::make_shared<VD(13)>();
+            (*gnss_data) << gnss_time; //GNSS时间戳
+            (*gnss_data) << (*pos_iter)->latitude, (*pos_iter)->longitude, (*pos_iter)->altitude; //GNSS LLA 坐标
+            (*gnss_data) << (*pos_iter)->position_covariance[0], (*pos_iter)->position_covariance[4], (*pos_iter)->position_covariance[8]; //GNSS LLA 方差
+            (*gnss_data) << (*vel_iter)->twist.twist.linear.x, (*vel_iter)->twist.twist.linear.y, (*vel_iter)->twist.twist.linear.z; //GNSS 线性速度
+            (*gnss_data) << (*vel_iter)->twist.covariance[0], (*vel_iter)->twist.covariance[7], (*vel_iter)->twist.covariance[14]; //GNSS 速度方差
             meas.gnss.push_back(gnss_data);
+            // cout << *(meas.gnss.front()) << endl; //确认数据还在
             pos_iter = gnss_pos_buffer.erase(pos_iter); // 使用erase来移除元素并更新迭代器
             vel_iter = gnss_vel_buffer.erase(vel_iter); // 使用erase来移除元素并更新迭代器
         }

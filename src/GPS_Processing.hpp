@@ -75,32 +75,36 @@ class GNSSProcess {
   public:
     EIGEN_MAKE_ALIGNED_OPERATOR_NEW
 
+    Eigen::Matrix<double, 6, 1> Z;  // Z: 观测矩阵(pos+vel)
+
     GNSSProcess();
     ~GNSSProcess();
-    Eigen::Matrix<double, 6, 1> Z;  // Z: 观测矩阵(pos+vel)
-    deque<GNSSPtr> v_gnss;
 
-  void Process(const MeasureGroup &meas,
-               esekfom::esekf<state_ikfom, 12, input_ikfom> &kf_state);
+    void Process(const MeasureGroup &meas, esekfom::esekf<state_ikfom, 12, input_ikfom> &kf_state);
+
+    V3D mean_lla_cord;
+    V3D mean_lla_var;
+    V3D mean_vel;
+    V3D mean_vel_var;
 
   private:
-    GNSSPtr last_gnss_;
-    bool init = false;
-    V3D init_pos;
-
     void GNSS_Init(const V3D &lla_cord);
     V3D convertToEnu(const V3D &lla_cord);
+
+    bool gnss_need_init_ = true;
+    V3D init_pos;
     // void Update(const Eigen::VectorXd &v_gnss);
 };
 
-GNSSProcess::GNSSProcess() { GNSSPtr last_gnss_ = new Eigen::Matrix<double,13,1>; }
-
+GNSSProcess::GNSSProcess()
+    : gnss_need_init_(true)
+{}
 GNSSProcess::~GNSSProcess() {}
 
 V3D GNSSProcess::convertToEnu(const V3D &lla_cord) {
   V3D enu;
   enu.setZero();
-  if (!init) {
+  if (gnss_need_init_) {
     ROS_WARN("GNSS Convert To ENU Cord Function Uninited!");
     return enu;
   }
@@ -123,40 +127,35 @@ V3D GNSSProcess::convertToEnu(const V3D &lla_cord) {
 
 void GNSSProcess::GNSS_Init(const V3D &lla_cord) {
   init_pos = lla_cord;
-  init = true;
+  gnss_need_init_ = false;
   ROS_INFO("GNSS Initial Done");
 }
 
-// void GNSSProcess::Update(const Eigen::VectorXd &v_gnss) {
-//   const double &gnss_time = v_gnss(0);
-//   const V3D &gnss_neu_cord = convertToEnu(v_gnss.segment(1, 3));
-//   const V3D &gnss_vel = v_gnss.segment(7, 9);
-// }
-
 void GNSSProcess::Process(const MeasureGroup &meas, esekfom::esekf<state_ikfom, 12, input_ikfom> &kf_state) {
-  /*** add the gnss of the last frame-tail to the of current frame-head ***/
-  deque<GNSSPtr> v_gnss = meas.gnss;
-  // v_gnss.push_front(last_gnss_);
   /* 获取当前系统状态变量 */
   state_ikfom imu_state = kf_state.get_x();
   const V3D &imu_pos = imu_state.pos;
   const V3D &imu_vel = imu_state.vel;
   // V3D imu_eul = SO3ToEuler(imu_state.rot);
   /* 获取当前系统状态变量 */
-  if (!init) {
-    V3D gnss_lla_cord = v_gnss.front()->block<3,1>(1,0);
-    cout << gnss_lla_cord << endl;
-    GNSS_Init(gnss_lla_cord);
-  }
+  uint8_t N = 1;
+  for (const auto &gnss : meas.gnss)
+  {
+    const auto &lla_cord = gnss->segment<3>(1);
+    const auto &lla_var = gnss->segment<3>(4);
+    const auto &vel = gnss->segment<3>(7);
+    const auto &vel_var = gnss->segment<3>(10);
 
-  auto gnss_iter = v_gnss.begin();
-  while (gnss_iter != v_gnss.end()) {
-    // Update(*(v_gnss.front()));
-    gnss_iter = v_gnss.erase(gnss_iter);
+    mean_lla_cord += (lla_cord - mean_lla_cord) / N;
+    mean_lla_var  += (lla_var - mean_lla_var) / N;
+    mean_vel      += (vel - mean_vel) / N;
+    mean_vel_var  += (vel_var - mean_vel_var) / N;
+    // cout<<"acc norm: "<<cur_acc.norm()<<" "<<mean_acc.norm()<<endl;
+    N++;
   }
-  cout << "GNSS DATA Processed Done!";
-  // cout << imu_pose << endl;
-  // cout << imu_vel << endl;
+  /* 若GNSS需要初始化 */
+  if(gnss_need_init_) GNSS_Init(mean_lla_cord);
+
   double B = imu_pos(0);
   double L = imu_pos(1);
   double h = imu_pos(2);

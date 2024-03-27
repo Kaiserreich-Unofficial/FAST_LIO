@@ -41,12 +41,14 @@ typedef Vector3d V3D;
 typedef Matrix3d M3D;
 typedef Vector3f V3F;
 typedef Matrix3f M3F;
-typedef Matrix<double,13,1>* GNSSPtr;
+
 
 #define MD(a,b)  Matrix<double, (a), (b)>
 #define VD(a)    Matrix<double, (a), 1>
 #define MF(a,b)  Matrix<float, (a), (b)>
 #define VF(a)    Matrix<float, (a), 1>
+
+typedef shared_ptr<VD(13)> GNSSPtr;
 
 M3D Eye3d(M3D::Identity());
 M3F Eye3f(M3F::Identity());
