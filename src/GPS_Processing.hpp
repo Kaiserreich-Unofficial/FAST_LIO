@@ -90,10 +90,10 @@ class GNSSProcess {
 
     void GNSS_Init(const V3D &lla_cord);
     V3D convertToEnu(const V3D &lla_cord);
-    void Update(const Eigen::VectorXd &v_gnss);
+    // void Update(const Eigen::VectorXd &v_gnss);
 };
 
-GNSSProcess::GNSSProcess() { GNSSPtr last_gnss_ = new Eigen::VectorXd(13); }
+GNSSProcess::GNSSProcess() { GNSSPtr last_gnss_ = new Eigen::Matrix<double,13,1>; }
 
 GNSSProcess::~GNSSProcess() {}
 
@@ -127,11 +127,11 @@ void GNSSProcess::GNSS_Init(const V3D &lla_cord) {
   ROS_INFO("GNSS Initial Done");
 }
 
-void GNSSProcess::Update(const Eigen::VectorXd &v_gnss) {
-  const double &gnss_time = v_gnss(0);
-  const V3D &gnss_neu_cord = convertToEnu(v_gnss.segment(1, 3));
-  const V3D &gnss_vel = v_gnss.segment(7, 9);
-}
+// void GNSSProcess::Update(const Eigen::VectorXd &v_gnss) {
+//   const double &gnss_time = v_gnss(0);
+//   const V3D &gnss_neu_cord = convertToEnu(v_gnss.segment(1, 3));
+//   const V3D &gnss_vel = v_gnss.segment(7, 9);
+// }
 
 void GNSSProcess::Process(const MeasureGroup &meas, esekfom::esekf<state_ikfom, 12, input_ikfom> &kf_state) {
   /*** add the gnss of the last frame-tail to the of current frame-head ***/
@@ -141,18 +141,17 @@ void GNSSProcess::Process(const MeasureGroup &meas, esekfom::esekf<state_ikfom, 
   state_ikfom imu_state = kf_state.get_x();
   const V3D &imu_pos = imu_state.pos;
   const V3D &imu_vel = imu_state.vel;
-  cout << imu_pos << imu_vel << endl;
   // V3D imu_eul = SO3ToEuler(imu_state.rot);
   /* 获取当前系统状态变量 */
   if (!init) {
-    const V3D &gnss_lla_cord = v_gnss.front()->segment(1, 3);
+    V3D gnss_lla_cord = v_gnss.front()->block<3,1>(1,0);
     cout << gnss_lla_cord << endl;
     GNSS_Init(gnss_lla_cord);
   }
 
   auto gnss_iter = v_gnss.begin();
   while (gnss_iter != v_gnss.end()) {
-    Update(*(v_gnss.front()));
+    // Update(*(v_gnss.front()));
     gnss_iter = v_gnss.erase(gnss_iter);
   }
   cout << "GNSS DATA Processed Done!";

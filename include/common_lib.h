@@ -41,6 +41,7 @@ typedef Vector3d V3D;
 typedef Matrix3d M3D;
 typedef Vector3f V3F;
 typedef Matrix3f M3F;
+typedef Matrix<double,13,1>* GNSSPtr;
 
 #define MD(a,b)  Matrix<double, (a), (b)>
 #define VD(a)    Matrix<double, (a), 1>
@@ -51,7 +52,6 @@ M3D Eye3d(M3D::Identity());
 M3F Eye3f(M3F::Identity());
 V3D Zero3d(0, 0, 0);
 V3F Zero3f(0, 0, 0);
-using GNSSPtr = Eigen::VectorXd*;
 
 struct MeasureGroup     // Lidar data and imu dates for the curent process
 {

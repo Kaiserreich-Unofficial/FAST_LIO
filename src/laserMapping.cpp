@@ -494,7 +494,7 @@ bool sync_packages(MeasureGroup &meas)
         {
             double gnss_time = ((*pos_iter)->header.stamp.toSec() + (*vel_iter)->header.stamp.toSec()) / 2;
             if(gnss_time > lidar_end_time) break;
-            GNSSPtr gnss_data = new Eigen::VectorXd(13);
+            GNSSPtr gnss_data = new Eigen::Matrix<double,13,1>;
             *gnss_data << gnss_time; //GNSS时间戳
             *gnss_data << gnss_pos_buffer.front()->latitude, gnss_pos_buffer.front()->longitude, gnss_pos_buffer.front()->altitude; //GNSS LLA 坐标
             *gnss_data << gnss_pos_buffer.front()->position_covariance[0], gnss_pos_buffer.front()->position_covariance[4], gnss_pos_buffer.front()->position_covariance[8]; //GNSS LLA 方差
