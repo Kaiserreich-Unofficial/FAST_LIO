@@ -1,6 +1,7 @@
 #include <Eigen/Eigen>
 
 #include "use-ikfom.hpp"
+#include <typeinfo>
 
 /*============================================定义一些地理坐标常数==============================================*/
 #define OMEGA 7.2921151467e-5  // rotational angular velocity of the earth
@@ -75,7 +76,9 @@ class GNSSProcess {
   public:
     EIGEN_MAKE_ALIGNED_OPERATOR_NEW
 
-    Eigen::Matrix<double, 6, 1> Z;  // Z: 观测矩阵(pos+vel)
+    VD(6) Z;  // Z: 观测误差向量
+    MD(6,6) R; // R: 观测值的方差矩阵
+    MD(6,23) H;    // H: 观测值的系数矩阵
 
     GNSSProcess();
     ~GNSSProcess();
@@ -93,13 +96,13 @@ class GNSSProcess {
 
     bool gnss_need_init_ = true;
     V3D* init_pos;
-    V3D* pre_pose;
-    V3D* pre_vel;
+    M3D I33 = Matrix3d::Identity();
+    MD(23,23) IFF = MatrixXd::Identity(23,23);
     // void Update(const Eigen::VectorXd &v_gnss);
 };
 
 GNSSProcess::GNSSProcess()
-    : gnss_need_init_(true), init_pos(new V3D), pre_pose(new V3D), pre_vel(new V3D)
+    : gnss_need_init_(true), init_pos(new V3D)
 {}
 GNSSProcess::~GNSSProcess() {}
 
@@ -151,17 +154,27 @@ V3D GNSSProcess::ConvertToNED(const V3D &lla_cord) {
 }
 
 void GNSSProcess::GNSS_Init(const V3D &lla_cord) {
-  *init_pos = lla_cord;
-  gnss_need_init_ = false;
-  ROS_INFO("GNSS Initial Done");
+  if(lla_cord.sum() <= 1e-3)
+  {
+    ROS_WARN("GPS NavSat Unfixed!");
+  }
+  else
+  {
+    *init_pos = lla_cord;
+    gnss_need_init_ = false;
+    ROS_INFO("GNSS Initial Done");
+  }
 }
 
 void GNSSProcess::Process(const MeasureGroup &meas, esekfom::esekf<state_ikfom, 12, input_ikfom> &kf_state) {
   /* 获取当前系统状态变量 */
-  state_ikfom imu_state = kf_state.get_x();
-  const V3D &imu_pos = imu_state.pos;
-  const V3D &imu_vel = imu_state.vel;
-  // V3D imu_eul = SO3ToEuler(imu_state.rot);
+  state_ikfom init_state = kf_state.get_x(); //rot pos vel bias_gyro bias_acc gravity R_L p_L
+  /* 获取当前系统协方差矩阵 */
+  esekfom::esekf<state_ikfom, 12, input_ikfom>::cov init_P = kf_state.get_P(); // 24x24维
+
+  V3D imu_pos = init_state.pos;
+  V3D imu_vel = init_state.vel;
+  // V3D imu_eul = SO3ToEuler(init_state.rot);
   /* 获取当前系统状态变量 */
   uint8_t N = 1;
   for (const auto &gnss : meas.gnss)
@@ -180,40 +193,74 @@ void GNSSProcess::Process(const MeasureGroup &meas, esekfom::esekf<state_ikfom, 
   }
   /* 若GNSS需要初始化 */
   if(gnss_need_init_) GNSS_Init(mean_lla_cord);
+  else
+  {
+    double B = imu_pos(0);
+    double L = imu_pos(1);
+    double h = imu_pos(2);
 
-  double B = imu_pos(0);
-  double L = imu_pos(1);
-  double h = imu_pos(2);
+    double vN = imu_vel(0);
+    double vE = imu_vel(1);
+    double vD = imu_vel(2);
 
-  double vN = imu_vel(0);
-  double vE = imu_vel(1);
-  double vD = imu_vel(2);
+    double RM = cal_RM(B);
+    double RN = cal_RN(B);
 
-  double RM = cal_RM(B);
-  double RN = cal_RN(B);
+    V3D w_ei_n;  // 地球自转角速度在n系下的投影
+    V3D w_ne_n;  // n系相对于e系的角速度在n系下的投影（牵连角速度）
+    V3D w_ni_n;  // n系相对于i系的角速度在n系下的投影（牵连角速度）
+    w_ei_n << Omega_WGS * cos(B), 0, -1.0 * Omega_WGS * sin(B);
+    w_ne_n << vE / (RN + h), -1.0 * vN / (RM + h), -1.0 * vE * tan(B) / (RN + h);
+    w_ni_n = w_ei_n + w_ne_n;
 
-  V3D w_ei_n;  // 地球自转角速度在n系下的投影
-  V3D w_ne_n;  // n系相对于e系的角速度在n系下的投影（牵连角速度）
-  V3D w_ni_n;  // n系相对于i系的角速度在n系下的投影（牵连角速度）
-  w_ei_n << Omega_WGS * cos(B), 0, -1.0 * Omega_WGS * sin(B);
-  w_ne_n << vE / (RN + h), -1.0 * vN / (RM + h), -1.0 * vE * tan(B) / (RN + h);
-  w_ni_n = w_ei_n + w_ne_n;
+    M3D C_b2n = init_state.rot.toRotationMatrix();
+    VD(23) x;
+    x.setZero();
+    x.block<3, 1>(0, 3) = init_state.pos;
+    x.block<3, 1>(0, 6) = init_state.vel;
 
-  M3D C_b2n = imu_state.rot.toRotationMatrix();
+    // DR_inv 将 n 系下的北向、东向和垂向位置差异（单位 m）转化为纬度、经度和高程分量的差异
+    M3D DR;
+    DR.setZero();
+    DR(0, 0) = RM + h;
+    DR(1, 1) = (RN + h) * cos(B);
+    DR(2, 2) = -1;
+    M3D DR_inv = DR.inverse();
 
-  // DR_inv 将 n 系下的北向、东向和垂向位置差异（单位
-  // m）转化为纬度、经度和高程分量的差异
-  M3D DR;
-  DR.setZero();
-  DR(0, 0) = RM + h;
-  DR(1, 1) = (RN + h) * cos(B);
-  DR(2, 2) = -1;
-  M3D DR_inv = DR.inverse();
+    /***********************观测方程***************************/
+    V3D gnss_pos = ConvertToNED(mean_lla_cord);
+    ROS_INFO("Lat:%0.6f Lon:%0.6f Alt:%0.6f", mean_lla_cord(0), mean_lla_cord(1), mean_lla_cord(2));
+    ROS_INFO("N:%0.6f E:%0.6f D:%0.6f", gnss_pos(0), gnss_pos(1), gnss_pos(2));
+    Z.setZero();
+    Z.block<3, 1>(0, 0) = DR * (imu_pos - gnss_pos); // 还没有加入leverarm效应修正
+    Z.block<3, 1>(3, 0) = imu_vel - mean_vel;
 
-  /***********************观测方程***************************/
-  V3D gnss_pos = ConvertToNED(mean_lla_cord);
-  ROS_INFO("Lat:%0.6f Lon:%0.6f Alt:%0.6f", mean_lla_cord(0), mean_lla_cord(1), mean_lla_cord(2));
-  ROS_INFO("N:%0.6f E:%0.6f U:%0.6f", gnss_pos(0), gnss_pos(1), gnss_pos(2));
-  *pre_pose = DR * (imu_pos - gnss_pos);
-  *pre_vel = imu_vel - mean_vel;
+	  H.setZero();
+	  H.block<3, 3>(0, 3) = I33;
+	  H.block<3, 3>(3, 6) = I33;
+
+    // R矩阵
+	  R.setZero();
+	  R.block<3, 3>(0, 0) = mean_lla_var.asDiagonal();
+	  R.block<3, 3>(3, 3) = mean_vel_var.asDiagonal();
+    //cout << init_P << endl;
+
+	  // 计算出 Kalman 增益矩阵 K
+	  MD(23,6) K = init_P * H.transpose() * ((H * init_P * H.transpose() + R).inverse());
+	  VD(6) V = Z - H * x;
+
+    x = x + K * V;
+	  init_P = (IFF - K * H) * init_P * ((IFF - K * H).transpose()) + K * R * K.transpose();
+
+    V3D Pos_error = x.block<3, 1>(0, 3);
+    V3D Vel_error = x.block<3, 1>(0, 6);
+    // 位置速度的改正
+	  imu_pos(0) = imu_pos(0) - Pos_error(0) * DR_inv(0, 0);
+	  imu_pos(1) = imu_pos(1) - Pos_error(1) * DR_inv(1, 1);
+	  imu_pos(2) = imu_pos(2) - Pos_error(2) * DR_inv(2, 2);
+    imu_vel = mean_vel - Vel_error;
+    init_state.pos = imu_pos;
+    init_state.vel = imu_vel;
+    kf_state.change_x(init_state);
+  }
 }
