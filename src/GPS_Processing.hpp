@@ -261,6 +261,8 @@ void GNSSProcess::Process(const MeasureGroup &meas, esekfom::esekf<state_ikfom, 
     imu_vel = mean_vel - Vel_error;
     init_state.pos = imu_pos;
     init_state.vel = imu_vel;
+    // 修改状态变量和方差
     kf_state.change_x(init_state);
+    kf_state.change_P(init_P);
   }
 }

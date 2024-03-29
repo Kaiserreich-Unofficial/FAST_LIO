@@ -25,5 +25,10 @@ mapping:
 publish:
     path_en: true
 
+leverarm:
+    lever_arm_forward: 0.0
+    lever_arm_right: 0.0
+    lever_arm_down: 0.0
+
 pcd_save:
     pcd_save_en: false
