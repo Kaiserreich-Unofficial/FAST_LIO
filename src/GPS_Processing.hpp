@@ -4,25 +4,10 @@
 #include <typeinfo>
 
 /*============================================定义一些地理坐标常数==============================================*/
-#define OMEGA 7.2921151467e-5  // rotational angular velocity of the earth
-#define C_SPEED 2.99792458e8
-
 /* Physical parameters of the Earth, Sun and Moon  */
 #define R_WGS84 6378137.0           /* Radius Earth [m]; WGS-84  */
-#define B_WGS84 6356752.3141        /* Radius(B) Earth [m]; WGS-84  */
-#define F_WGS84 1.0 / 298.257223563 /* Flattening; WGS-84   */
-#define Omega_WGS 7.2921151467e-5   /*[rad/s], the earth rotation rate */
-#define GM_Earth 398600.5e+9        /* [m^3/s^2]; WGS-84 */
-#define GM_JGM3 398600.4418e+9      /* [m^3/s^2]; JGM3  */
 #define E2_WGS84 0.0066943799901413
-#define GammaA 9.7803253359
-#define GammaB 9.8321849379
 
-/* Physical parameters of the Earth, Sun and Moon  */
-#define R_CGS2K 6378137.0           /* Radius Earth [m]; CGCS2000  */
-#define F_CGS2K 1.0 / 298.257222101 /* Flattening; CGCS2000   */
-#define E2_CGS2K 0.0066943800229008
-#define GM_BDS 398600.4418e+9 /* [m^3/s^2]; CGCS2000  */
 /*===========================================================================================================*/
 
 /*******************************************************
@@ -290,18 +275,24 @@ void GNSSProcess::Process(const MeasureGroup &meas, esekfom::esekf<state_ikfom, 
     x = x + K * V;
 	  init_P = (IFF - K * H) * init_P * ((IFF - K * H).transpose()) + K * R * K.transpose();
 
-    V3D Rot_error = x.block<3, 1>(0, 0);
-    V3D Pos_error = x.block<3, 1>(3, 0);
-    V3D Vel_error = x.block<3, 1>(6, 0);
-	  V3D Bias_g_error = x.block<3, 1>(9, 0);
-	  V3D Bias_a_error = x.block<3, 1>(12, 0);
+    V3D _rot_error = x.block<3, 1>(0, 0);
+    V3D _pos_error = x.block<3, 1>(3, 0);
+    V3D _vel_error = x.block<3, 1>(6, 0);
+	  V3D _bias_g_error = x.block<3, 1>(9, 0);
+	  V3D _bias_a_error = x.block<3, 1>(12, 0);
     // 位置速度的改正
-	  imu_pos(0) = imu_pos(0) - Pos_error(0) * DR_inv(0, 0);
-	  imu_pos(1) = imu_pos(1) - Pos_error(1) * DR_inv(1, 1);
-	  imu_pos(2) = imu_pos(2) - Pos_error(2) * DR_inv(2, 2);
-    imu_vel = gnss_vel - Vel_error;
+	  imu_pos(0) -= _pos_error(0) * DR_inv(0, 0);
+	  imu_pos(1) -= _pos_error(1) * DR_inv(1, 1);
+	  imu_pos(2) -= _pos_error(2) * DR_inv(2, 2);
+    imu_vel = gnss_vel - _vel_error;
     init_state.pos = imu_pos;
     init_state.vel = imu_vel;
+    // 姿态改正
+    M3D _C_b2n_new = (I33 - SkewMat(_rot_error)).inverse() * C_b2n;
+
+    // 角加速度零偏改正
+    init_state.bg += _bias_g_error;
+    init_state.ba += _bias_a_error;
     // 修改状态变量和方差
     kf_state.change_x(init_state);
     kf_state.change_P(init_P);
