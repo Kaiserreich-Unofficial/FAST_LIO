@@ -58,6 +58,7 @@ class ImuProcess
   V3D cov_gyr_scale;
   V3D cov_bias_gyr;
   V3D cov_bias_acc;
+  V3D angvel_avr;
   double first_lidar_time;
 
  private:
@@ -233,7 +234,7 @@ void ImuProcess::UndistortPcl(const MeasureGroup &meas, esekfom::esekf<state_ikf
   IMUpose.push_back(set_pose6d(0.0, acc_s_last, angvel_last, imu_state.vel, imu_state.pos, imu_state.rot.toRotationMatrix()));
 
   /*** forward propagation at each imu point ***/
-  V3D angvel_avr, acc_avr, acc_imu, vel_imu, pos_imu;
+  V3D acc_avr, acc_imu, vel_imu, pos_imu;
   M3D R_imu;
 
   double dt = 0;

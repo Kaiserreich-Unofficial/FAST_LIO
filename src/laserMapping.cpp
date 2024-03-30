@@ -145,6 +145,9 @@ shared_ptr<Preprocess> p_pre(new Preprocess());
 shared_ptr<ImuProcess> p_imu(new ImuProcess());
 shared_ptr<GNSSProcess> p_gnss(new GNSSProcess());
 
+//杆臂效应向量
+shared_ptr<V3D> leverarm = make_shared<V3D>();
+
 void SigHandle(int sig)
 {
     flg_exit = true;
@@ -881,6 +884,11 @@ int main(int argc, char** argv)
     nh.param<bool>("mapping/extrinsic_est_en", extrinsic_est_en, true);
     nh.param<bool>("pcd_save/pcd_save_en", pcd_save_en, false);
     nh.param<bool>("common/gnss_en", gnss_en, false);
+    /* 杆臂效应常数定义 */
+    nh.param<double>("leverarm/lever_arm_forward", leverarm->x(), 0.);
+    nh.param<double>("leverarm/lever_arm_right", leverarm->y(), 0.);
+    nh.param<double>("leverarm/lever_arm_down", leverarm->z(), 0.);
+
     nh.param<int>("pcd_save/interval", pcd_save_interval, -1);
     nh.param<vector<double>>("mapping/extrinsic_T", extrinT, vector<double>());
     nh.param<vector<double>>("mapping/extrinsic_R", extrinR, vector<double>());
@@ -979,7 +987,7 @@ int main(int argc, char** argv)
             t0 = omp_get_wtime();
 
             p_imu->Process(Measures, kf, feats_undistort);
-            p_gnss->Process(Measures, kf);
+            p_gnss->Process(Measures, kf, leverarm, p_imu->angvel_avr);
             state_point = kf.get_x();
             pos_lid = state_point.pos + state_point.rot * state_point.offset_T_L_I;
 
