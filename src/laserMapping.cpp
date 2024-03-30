@@ -987,7 +987,7 @@ int main(int argc, char** argv)
             t0 = omp_get_wtime();
 
             p_imu->Process(Measures, kf, feats_undistort);
-            p_gnss->Process(Measures, kf, leverarm, p_imu->angvel_avr);
+            p_gnss->Process(Measures, kf, leverarm, p_imu->gyro);
             state_point = kf.get_x();
             pos_lid = state_point.pos + state_point.rot * state_point.offset_T_L_I;
 
