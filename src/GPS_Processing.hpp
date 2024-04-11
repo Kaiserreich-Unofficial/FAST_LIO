@@ -2,7 +2,10 @@
 
 #include "use-ikfom.hpp"
 #include <typeinfo>
+#include <GeographicLib/Geocentric.hpp>
+#include <GeographicLib/LocalCartesian.hpp>
 
+using namespace GeographicLib;
 /*============================================定义一些地理坐标常数==============================================*/
 /* Physical parameters of the Earth, Sun and Moon  */
 #define R_WGS84 6378137.0           /* Radius Earth [m]; WGS-84  */
@@ -92,16 +95,20 @@ class GNSSProcess {
 
 
   private:
-    void GNSS_Init(const V3D &lla_cord);
-    V3D ConvertToNED(const V3D &lla_cord);
+    void GNSS_Init(const V3D &lla_cord, const V3D &imu_enu);
     void CorrectLeverArm(const V3D &leverarm, const V3D &w_bi_b);
 
     /* 姿态变量 */
     bool gnss_need_init_ = true;
-    V3D* init_pos;
+    V3D* init_imu_enu;
     V3D imu_pos;
     V3D imu_vel;
     /* 定义地理坐标变量 */
+    // 创建Geocentric对象，用于ECEF和LLA之间的转换
+    const Geocentric& earth = Geocentric::WGS84();
+    // 创建LocalCartesian对象，用于ENU和ECEF之间的转换
+    LocalCartesian proj;
+
     double lat, lon, alt;
     double vN, vE, vD;
     double RM, RN;
@@ -122,66 +129,20 @@ class GNSSProcess {
 };
 
 GNSSProcess::GNSSProcess()
-    : gnss_need_init_(true), init_pos(new V3D)
+    : gnss_need_init_(true), init_imu_enu(new V3D)
 {}
 
 GNSSProcess::~GNSSProcess() {}
 
-V3D GNSSProcess::ConvertToNED(const V3D &lla_cord) {
-  V3D ned;
-  ned.setZero();
-  if (gnss_need_init_) {
-    ROS_WARN("GNSS Convert To NED Cord Function Uninited!");
-    return ned;
-  }
-  else if((lla_cord(0) < -90.0) || (lla_cord(0) > +90.0) || (lla_cord(1) < -180.0) || (lla_cord(1) > +180.0)) // 经纬度有效性检查
-  {
-    ROS_WARN("WGS lat or WGS lon out of range");
-    return ned;
-  }
-
-  /* LLA 转 ECEF 坐标系 */
-  double sin_lat = sin(deg2rad(lla_cord(0)));
-  double cos_lat = cos(deg2rad(lla_cord(0)));
-  double sin_lon = sin(deg2rad(lla_cord(1)));
-  double cos_lon = cos(deg2rad(lla_cord(1)));
-  double r_n = R_WGS84/sqrt(1.0 - E2_WGS84 * sin_lat * sin_lat);
-  V3D xyz = {
-    (r_n + lla_cord(2)) * cos_lat * cos_lon,
-    (r_n + lla_cord(2)) * cos_lat * sin_lon,
-    (r_n * (1.0 - E2_WGS84) + lla_cord(2)) * sin_lat
-  };
-
-  /* ECEF 转 NED 坐标系 */
-  double cos_lat_ref = cos(deg2rad((*init_pos)(0)));
-  double sin_lat_ref = sin(deg2rad((*init_pos)(0)));
-  double cos_lon_ref = cos(deg2rad((*init_pos)(1)));
-  double sin_lon_ref = sin(deg2rad((*init_pos)(1)));
-  double r_n_ref = R_WGS84 / sqrt(1.0 - E2_WGS84 * sin_lat_ref * sin_lat_ref);
-  // 先把初始参考坐标转换到ECEF坐标系下
-  V3D ref_xyz = {
-    (r_n_ref + (*init_pos)(2)) * cos_lat_ref * cos_lon_ref,
-    (r_n_ref + (*init_pos)(2)) * cos_lat_ref * sin_lon_ref,
-    (r_n_ref * (1.0 - E2_WGS84) + (*init_pos)(2)) * sin_lat_ref
-  };
-
-  V3D diff_xyz = xyz - ref_xyz;
-  ned = {
-    -sin_lat_ref * cos_lon_ref * diff_xyz(0) - sin_lat_ref * sin_lon_ref * diff_xyz(1) + cos_lat_ref * diff_xyz(2),
-    cos_lat_ref * sin_lon_ref * diff_xyz(0) - cos_lat_ref * cos_lon_ref * diff_xyz(1),
-    -sin_lon_ref * diff_xyz(0) + cos_lon_ref * diff_xyz(1)
-  };
-  return ned;
-}
-
-void GNSSProcess::GNSS_Init(const V3D &lla_cord) {
-  if(lla_cord.sum() <= 1e-3)
+void GNSSProcess::GNSS_Init(const V3D &init_pos, const V3D &imu_enu) {
+  if(init_pos.sum() <= 1e-3)
   {
     ROS_WARN("GPS NavSat Unfixed!");
   }
   else
   {
-    *init_pos = lla_cord;
+    *init_imu_enu = imu_enu;
+    proj.Reset(init_pos(0), init_pos(1), init_pos(2));
     gnss_need_init_ = false;
     ROS_INFO("GNSS Initial Done");
   }
@@ -207,7 +168,7 @@ void GNSSProcess::Process(const MeasureGroup &meas, esekfom::esekf<state_ikfom, 
   /* 获取当前系统协方差矩阵 */
   esekfom::esekf<state_ikfom, 12, input_ikfom>::cov init_P = kf_state.get_P(); // 24x24维
 
-  imu_pos = init_state.pos;
+  V3D imu_enu_pos = init_state.pos;
   imu_vel = init_state.vel;
   // imu_eul = SO3ToEuler(init_state.rot);
   /* 获取当前系统状态变量 */
@@ -230,9 +191,18 @@ void GNSSProcess::Process(const MeasureGroup &meas, esekfom::esekf<state_ikfom, 
     N++;
   }
   /* 若GNSS需要初始化 */
-  if(gnss_need_init_) GNSS_Init(gnss_lla_cord);
+  if(gnss_need_init_) GNSS_Init(gnss_lla_cord, imu_enu_pos);
   else
   {
+    // imu_enu_pos -= (*init_imu_enu); // 只取IMU的ENU坐标增量，防止坐标转换错误
+    ROS_INFO("[IMU]: E:%0.6f N:%0.6f U:%0.6f", imu_enu_pos(0), imu_enu_pos(1), imu_enu_pos(2));
+    // 将ENU坐标转换为ECEF坐标
+    double ecef_x, ecef_y, ecef_z;
+    proj.Reverse(imu_enu_pos(0), imu_enu_pos(1), imu_enu_pos(2), ecef_x, ecef_y, ecef_z);
+    // 将ECEF坐标转换为LLA坐标
+    earth.Reverse(ecef_x, ecef_y, ecef_z, imu_pos(0), imu_pos(1), imu_pos(2));
+    ROS_INFO("[IMU]: Lat:%0.6f Lon:%0.6f Alt:%0.6f", imu_pos(0), imu_pos(1), imu_pos(2));
+
     lat = imu_pos(0);
     lon = imu_pos(1);
     alt = imu_pos(2);
@@ -249,10 +219,8 @@ void GNSSProcess::Process(const MeasureGroup &meas, esekfom::esekf<state_ikfom, 
     w_ni_n = w_ei_n + w_ne_n;
 
     C_b2n = init_state.rot.toRotationMatrix();
-    gnss_pos = ConvertToNED(gnss_lla_cord);
 
-    ROS_INFO("Lat:%0.6f Lon:%0.6f Alt:%0.6f", gnss_lla_cord(0), gnss_lla_cord(1), gnss_lla_cord(2));
-    ROS_INFO("N:%0.6f E:%0.6f D:%0.6f", gnss_pos(0), gnss_pos(1), gnss_pos(2));
+    ROS_INFO("[GNSS]: Lat:%0.6f Lon:%0.6f Alt:%0.6f", gnss_lla_cord(0), gnss_lla_cord(1), gnss_lla_cord(2));
 
     // CorrectLeverArm(*leverarm, gyro); //杆臂效应改正
 
@@ -274,8 +242,8 @@ void GNSSProcess::Process(const MeasureGroup &meas, esekfom::esekf<state_ikfom, 
 
     /***********************观测方程***************************/
     Z.setZero();
-    Z.block<3, 1>(0, 0) = DR * (imu_pos - gnss_pos);
-    Z.block<3, 1>(3, 0) = imu_vel - gnss_vel;
+    Z.block<3, 1>(0, 0) = DR * (imu_pos - gnss_pos) + C_b2n * (*leverarm);
+    Z.block<3, 1>(3, 0) = imu_vel - gnss_vel - C_b2n * (*leverarm).cross(gyro) - SkewMat(w_ni_n) * C_b2n * (*leverarm);
 
 	  H.setZero();
     // H.block<3, 3>(0, 0) = SkewMat(C_b2n * (*leverarm)); //姿态
@@ -307,6 +275,12 @@ void GNSSProcess::Process(const MeasureGroup &meas, esekfom::esekf<state_ikfom, 
 	  imu_pos(1) -= _pos_error(1) * DR_inv(1, 1);
 	  imu_pos(2) -= _pos_error(2) * DR_inv(2, 2);
     imu_vel = gnss_vel - _vel_error;
+    /* 将改正后的位置和速度写回init_state中 */
+    // 将LLA坐标转换为ECEF坐标
+    earth.Forward(imu_pos(0), imu_pos(1), imu_pos(2), ecef_x, ecef_y, ecef_z);
+    // 将ECEF坐标转换为ENU坐标
+    proj.Forward(ecef_x, ecef_y, ecef_z, imu_pos(0), imu_pos(1), imu_pos(2));
+
     init_state.pos = imu_pos;
     init_state.vel = imu_vel;
     // 姿态改正
