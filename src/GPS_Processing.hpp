@@ -2,7 +2,6 @@
 
 #include "use-ikfom.hpp"
 #include <typeinfo>
-#include <GeographicLib/Geocentric.hpp>
 #include <GeographicLib/LocalCartesian.hpp>
 
 using namespace GeographicLib;
@@ -95,22 +94,19 @@ class GNSSProcess {
 
 
   private:
-    void GNSS_Init(const V3D &lla_cord, const V3D &imu_enu);
-    void CorrectLeverArm(const V3D &leverarm, const V3D &w_bi_b);
+    void GNSS_Init(const V3D &lla_cord);
+    void CorrectLeverArm(const V3D &leverarm, const V3D &gyro);
 
     /* 姿态变量 */
     bool gnss_need_init_ = true;
-    V3D* init_imu_enu;
     V3D imu_pos;
     V3D imu_vel;
     /* 定义地理坐标变量 */
-    // 创建Geocentric对象，用于ECEF和LLA之间的转换
-    const Geocentric& earth = Geocentric::WGS84();
     // 创建LocalCartesian对象，用于ENU和ECEF之间的转换
     LocalCartesian proj;
 
     double lat, lon, alt;
-    double vN, vE, vD;
+    double vE, vN, vU;
     double RM, RN;
     V3D w_ei_n;  // 地球自转角速度在n系下的投影
     V3D w_ne_n;  // n系相对于e系的角速度在n系下的投影（牵连角速度）
@@ -129,19 +125,18 @@ class GNSSProcess {
 };
 
 GNSSProcess::GNSSProcess()
-    : gnss_need_init_(true), init_imu_enu(new V3D)
+    : gnss_need_init_(true)
 {}
 
 GNSSProcess::~GNSSProcess() {}
 
-void GNSSProcess::GNSS_Init(const V3D &init_pos, const V3D &imu_enu) {
+void GNSSProcess::GNSS_Init(const V3D &init_pos) {
   if(init_pos.sum() <= 1e-3)
   {
     ROS_WARN("GPS NavSat Unfixed!");
   }
   else
   {
-    *init_imu_enu = imu_enu;
     proj.Reset(init_pos(0), init_pos(1), init_pos(2));
     gnss_need_init_ = false;
     ROS_INFO("GNSS Initial Done");
@@ -150,9 +145,10 @@ void GNSSProcess::GNSS_Init(const V3D &init_pos, const V3D &imu_enu) {
 void GNSSProcess::CorrectLeverArm(const V3D &leverarm, const V3D &gyro)
 {
   M3D mat_n2l = Matrix3d::Zero(3, 3); //将北东地转化为LLH系
-	mat_n2l(0, 0) = 1.0 / (RM + alt);
-	mat_n2l(1, 1) = 1.0 / ((RN + alt) * cos(lat));
-	mat_n2l(2, 2) = -1.0;
+
+	mat_n2l(0, 0) = 1.0 / ((RN + alt) * cos(lat));
+  mat_n2l(1, 1) = 1.0 / (RM + alt);
+	mat_n2l(2, 2) = 1.0;
 
   M3D OMIGA_ni_n = SkewMat(w_ni_n);
 	M3D OMIGA_bi_b = SkewMat(gyro);
@@ -191,31 +187,27 @@ void GNSSProcess::Process(const MeasureGroup &meas, esekfom::esekf<state_ikfom, 
     N++;
   }
   /* 若GNSS需要初始化 */
-  if(gnss_need_init_) GNSS_Init(gnss_lla_cord, imu_enu_pos);
+  if(gnss_need_init_) GNSS_Init(gnss_lla_cord);
   else
   {
-    // imu_enu_pos -= (*init_imu_enu); // 只取IMU的ENU坐标增量，防止坐标转换错误
     ROS_INFO("[IMU]: E:%0.6f N:%0.6f U:%0.6f", imu_enu_pos(0), imu_enu_pos(1), imu_enu_pos(2));
-    // 将ENU坐标转换为ECEF坐标
-    double ecef_x, ecef_y, ecef_z;
-    proj.Reverse(imu_enu_pos(0), imu_enu_pos(1), imu_enu_pos(2), ecef_x, ecef_y, ecef_z);
-    // 将ECEF坐标转换为LLA坐标
-    earth.Reverse(ecef_x, ecef_y, ecef_z, imu_pos(0), imu_pos(1), imu_pos(2));
+    // 将ENU坐标转换为LLA坐标
+    proj.Reverse(imu_enu_pos(0), imu_enu_pos(1), imu_enu_pos(2), imu_pos(0), imu_pos(1), imu_pos(2));
     ROS_INFO("[IMU]: Lat:%0.6f Lon:%0.6f Alt:%0.6f", imu_pos(0), imu_pos(1), imu_pos(2));
 
     lat = imu_pos(0);
     lon = imu_pos(1);
     alt = imu_pos(2);
 
-    vN = imu_vel(0);
-    vE = imu_vel(1);
-    vD = imu_vel(2);
+    vE = imu_vel(0);
+    vN = imu_vel(1);
+    vU = imu_vel(2);
 
     RM = cal_RM(lat);
     RN = cal_RN(lat);
 
-    w_ei_n << Omega_WGS * cos(lat), 0, -1.0 * Omega_WGS * sin(lat);
-    w_ne_n << vE / (RN + alt), -1.0 * vN / (RM + alt), -1.0 * vE * tan(lat) / (RN + alt);
+    w_ei_n << 0, Omega_WGS * cos(lat), Omega_WGS * sin(lat);
+    w_ne_n << -1.0 * vN / (RM + alt), vE / (RN + alt), vE * tan(lat) / (RN + alt);
     w_ni_n = w_ei_n + w_ne_n;
 
     C_b2n = init_state.rot.toRotationMatrix();
@@ -227,7 +219,7 @@ void GNSSProcess::Process(const MeasureGroup &meas, esekfom::esekf<state_ikfom, 
     VD(23) x;
     x.setZero();
     // x.block<3, 1>(0, 0) = SO3ToEuler(init_state.rot);
-    x.block<3, 1>(0, 3) = init_state.pos;
+    x.block<3, 1>(0, 3) = imu_pos;
     x.block<3, 1>(0, 6) = init_state.vel;
     // x.block<3, 1>(0, 9) = init_state.bg;
     // x.block<3, 1>(0, 12) = init_state.ba;
@@ -235,9 +227,9 @@ void GNSSProcess::Process(const MeasureGroup &meas, esekfom::esekf<state_ikfom, 
     // DR_inv 将 n 系下的北向、东向和垂向位置差异（单位 m）转化为纬度、经度和高程分量的差异
     M3D DR;
     DR.setZero();
-    DR(0, 0) = RM + alt;
-    DR(1, 1) = (RN + alt) * cos(lat);
-    DR(2, 2) = -1;
+    DR(0, 0) = (RN + alt) * cos(lat);
+    DR(1, 1) = RM + alt;
+    DR(2, 2) = 1;
     M3D DR_inv = DR.inverse();
 
     /***********************观测方程***************************/
@@ -276,10 +268,10 @@ void GNSSProcess::Process(const MeasureGroup &meas, esekfom::esekf<state_ikfom, 
 	  imu_pos(2) -= _pos_error(2) * DR_inv(2, 2);
     imu_vel = gnss_vel - _vel_error;
     /* 将改正后的位置和速度写回init_state中 */
-    // 将LLA坐标转换为ECEF坐标
-    earth.Forward(imu_pos(0), imu_pos(1), imu_pos(2), ecef_x, ecef_y, ecef_z);
-    // 将ECEF坐标转换为ENU坐标
-    proj.Forward(ecef_x, ecef_y, ecef_z, imu_pos(0), imu_pos(1), imu_pos(2));
+    // 将NED坐标转换为LLA坐标
+    V3D imu_temp;
+    proj.Forward(imu_pos(0), imu_pos(1), imu_pos(2), imu_temp(0), imu_temp(1), imu_temp(2));
+    imu_pos = imu_temp;
 
     init_state.pos = imu_pos;
     init_state.vel = imu_vel;
