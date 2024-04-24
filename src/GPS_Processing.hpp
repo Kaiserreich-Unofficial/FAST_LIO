@@ -103,7 +103,7 @@ class GNSSProcess {
     V3D imu_vel;
     /* 定义地理坐标变量 */
     // 创建LocalCartesian对象，用于ENU和ECEF之间的转换
-    LocalCartesian proj;
+    LocalCartesian local_cord;
 
     double lat, lon, alt;
     double vE, vN, vU;
@@ -137,7 +137,7 @@ void GNSSProcess::GNSS_Init(const V3D &init_pos) {
   }
   else
   {
-    proj.Reset(init_pos(0), init_pos(1), init_pos(2));
+    local_cord.Reset(init_pos(0), init_pos(1), init_pos(2));
     gnss_need_init_ = false;
     ROS_INFO("GNSS Initial Done");
   }
@@ -192,7 +192,7 @@ void GNSSProcess::Process(const MeasureGroup &meas, esekfom::esekf<state_ikfom, 
   {
     ROS_INFO("[IMU]: E:%0.6f N:%0.6f U:%0.6f", imu_enu_pos(0), imu_enu_pos(1), imu_enu_pos(2));
     // 将ENU坐标转换为LLA坐标
-    proj.Reverse(imu_enu_pos(0), imu_enu_pos(1), imu_enu_pos(2), imu_pos(0), imu_pos(1), imu_pos(2));
+    local_cord.Reverse(imu_enu_pos(0), imu_enu_pos(1), imu_enu_pos(2), imu_pos(0), imu_pos(1), imu_pos(2));
     ROS_INFO("[IMU]: Lat:%0.6f Lon:%0.6f Alt:%0.6f", imu_pos(0), imu_pos(1), imu_pos(2));
 
     lat = imu_pos(0);
@@ -218,7 +218,7 @@ void GNSSProcess::Process(const MeasureGroup &meas, esekfom::esekf<state_ikfom, 
 
     VD(23) x;
     x.setZero();
-    // x.block<3, 1>(0, 0) = SO3ToEuler(init_state.rot);
+    x.block<3, 1>(0, 0) = SO3ToEuler(init_state.rot);
     x.block<3, 1>(0, 3) = imu_pos;
     x.block<3, 1>(0, 6) = init_state.vel;
     // x.block<3, 1>(0, 9) = init_state.bg;
@@ -238,9 +238,9 @@ void GNSSProcess::Process(const MeasureGroup &meas, esekfom::esekf<state_ikfom, 
     Z.block<3, 1>(3, 0) = imu_vel - gnss_vel - C_b2n * (*leverarm).cross(gyro) - SkewMat(w_ni_n) * C_b2n * (*leverarm);
 
 	  H.setZero();
-    // H.block<3, 3>(0, 0) = SkewMat(C_b2n * (*leverarm)); //姿态
+    H.block<3, 3>(0, 0) = SkewMat(C_b2n * (*leverarm)); //姿态
 	  H.block<3, 3>(0, 3) = I33;  //位置
-    // H.block<3, 3>(3, 0) = -SkewMat(w_ni_n) * SkewMat(C_b2n * (*leverarm)) - C_b2n * SkewMat((*leverarm).cross(gyro)); //姿态
+    H.block<3, 3>(3, 0) = -SkewMat(w_ni_n) * SkewMat(C_b2n * (*leverarm)) - C_b2n * SkewMat((*leverarm).cross(gyro)); //姿态
 	  H.block<3, 3>(3, 6) = I33; //速度
     // H.block<3, 3>(3, 9) = -SkewMat(C_b2n * (*leverarm)); //陀螺零偏
 
@@ -257,7 +257,7 @@ void GNSSProcess::Process(const MeasureGroup &meas, esekfom::esekf<state_ikfom, 
     x = x + K * V;
 	  init_P = (IFF - K * H) * init_P * ((IFF - K * H).transpose()) + K * R * K.transpose();
 
-    // V3D _rot_error = x.block<3, 1>(0, 0);
+    V3D _rot_error = x.block<3, 1>(0, 0);
     V3D _pos_error = x.block<3, 1>(3, 0);
     V3D _vel_error = x.block<3, 1>(6, 0);
 	  // V3D _bias_g_error = x.block<3, 1>(9, 0);
@@ -268,16 +268,16 @@ void GNSSProcess::Process(const MeasureGroup &meas, esekfom::esekf<state_ikfom, 
 	  imu_pos(2) -= _pos_error(2) * DR_inv(2, 2);
     imu_vel = gnss_vel - _vel_error;
     /* 将改正后的位置和速度写回init_state中 */
-    // 将NED坐标转换为LLA坐标
+    // 将LLA坐标转换为ENU坐标
     V3D imu_temp;
-    proj.Forward(imu_pos(0), imu_pos(1), imu_pos(2), imu_temp(0), imu_temp(1), imu_temp(2));
+    local_cord.Forward(imu_pos(0), imu_pos(1), imu_pos(2), imu_temp(0), imu_temp(1), imu_temp(2));
     imu_pos = imu_temp;
 
     init_state.pos = imu_pos;
     init_state.vel = imu_vel;
     // 姿态改正
-    // M3D _C_b2n_new = (I33 - SkewMat(_rot_error)).inverse() * C_b2n;
-    // init_state.rot = NormalizeR(_C_b2n_new);
+    M3D _C_b2n_new = (I33 - SkewMat(_rot_error)).inverse() * C_b2n;
+    init_state.rot = NormalizeR(_C_b2n_new);
 
     // 角加速度零偏改正
     // init_state.bg += _bias_g_error;
